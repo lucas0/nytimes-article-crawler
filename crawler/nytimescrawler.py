@@ -1,5 +1,6 @@
 from bs4 import BeautifulSoup
 from sys import stdout
+from newspaper import Article
 try:
     import urllib.request as urllib2
 except ImportError:
@@ -7,6 +8,8 @@ except ImportError:
 import re
 from collections import deque
 import logging
+import pandas as pd
+from urllib.parse import urlparse
 
 # TODO: Add Checkstyle PEP8
 # TODO: Add Unit Test Cases
@@ -163,9 +166,30 @@ class Crawler():
     def __crawl_website(self, url, current_index, results_path):
         href_links = []
         flag = False
+        entry = []
         # Get all the data of the current HTML page
         try:
             self.__logger.info('Crawling URL {} ::: Current Crawl Index {}.'.format(url, current_index))
+
+            a = Article(url)
+            a.download()
+            a.parse()
+
+            # gets the missing info: (o_url,o_domain,o_body,o_title,o_date,o_author,o_keywords,o_summary)
+            # and adds the entry to the consolidated dataframe
+            a.nlp()
+            o_title = a.title.encode('ascii', 'ignore')
+            o_date = a.publish_date
+            o_author = [k.encode('ascii', 'ignore') for k in a.authors]
+            o_tags = [k.encode('ascii', 'ignore') for k in a.tags]
+            o_keywords = [k.encode('ascii', 'ignore') for k in a.keywords]
+            o_summary = a.summary.encode('ascii', 'ignore')
+            o_body = a.text.encode('ascii', 'ignore')
+
+            parsed_uri = urlparse(url)
+            o_domain = '{uri.scheme}://{uri.netloc}/'.format(uri=parsed_uri)
+
+            entry = ["trusted",o_title,"true","[]","","trusted","[]",url,o_domain,o_body,o_title,o_date,o_author,o_keywords,o_summary]
 
             request = urllib2.urlopen(url)
             data_received = request.read()
@@ -184,10 +208,10 @@ class Crawler():
 
         # returns list of article links extracted from "url" and flag if new Document was created
 
-        return (href_links, flag)
+        return (entry, href_links, flag)
 
-    ''' 
-        Given: 
+    '''
+        Given:
         a) start_url : Entry point for the bfs routine to start crawling nytimes.
         b) url_limit : Integer denoting the number of url's to be crawled upon(with certain criteria)
                       before the halting.
@@ -196,6 +220,8 @@ class Crawler():
     def __bfs(self, start_url, url_limit, results_path):
         global_crawl_index = 0
         self.__url_queue.append(start_url)
+        df = pd.DataFrame(columns=["a_url","claim","verdict","a_tags","a_date","a_author","source_list","o_url","o_domain","o_body","o_title","o_date","o_author","o_keywords","o_summary"])
+
         while global_crawl_index != url_limit+1:
             # If we reach a stage where we cannot generate new links from the bfs tree of url
             if len(self.__url_queue) == 0:
@@ -208,7 +234,10 @@ class Crawler():
 
                 # Assign unique DOCUMENT_ID to the document of the link
                 current_index = global_crawl_index
-                hrefList, should_increment_crawler_index = self.__crawl_website(url, current_index, results_path)
+                entry, hrefList, should_increment_crawler_index = self.__crawl_website(url, current_index, results_path)
+
+                if len(entry) > 0:
+                    df.loc[len(df)] = entry
 
                 # Add new links to the Queue
                 self.__url_queue.extend(hrefList)
@@ -217,6 +246,8 @@ class Crawler():
                 if should_increment_crawler_index:
                     # Thus increment the Document Index ID
                     global_crawl_index += 1
+        df.to_csv("trusted.csv", index=False, sep="\t")
+
     def crawl(self, start, url_limit, results_path):
         self.__url_queue = deque()
         self.__url_map = {}
